@@ -186,6 +186,18 @@
       <label>Monto (MXN)
         <input type="number" id="txAmount" min="0.01" step="0.01" required>
       </label>
+      <label id="txMsiWrap" hidden>Meses sin intereses
+        <select id="txMonths">
+          <option value="1">1 — Pago único</option>
+          <option value="3">3 meses</option>
+          <option value="6">6 meses</option>
+          <option value="9">9 meses</option>
+          <option value="12">12 meses</option>
+          <option value="18">18 meses</option>
+          <option value="24">24 meses</option>
+        </select>
+        <span id="txMonthlyHint" class="msi-hint"></span>
+      </label>
       <label>Fecha
         <input type="date" id="txDate" required>
       </label>

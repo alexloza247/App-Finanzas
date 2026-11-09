@@ -81,6 +81,56 @@ function monthLabel() {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+// ---- Meses sin intereses (MSI) ----
+// La deuda total se suma a la tarjeta al comprar; el resumen mensual
+// solo cuenta la mensualidad que toca ese mes.
+function round2(n) { return Math.round(n * 100) / 100; }
+
+function msiMonths(tx) {
+  var m = parseInt(tx && tx.months, 10);
+  return m > 1 ? m : 1;
+}
+
+function msiMonthly(tx) {
+  if (tx && tx.monthlyAmount) return tx.monthlyAmount;
+  return round2((tx.amount || 0) / msiMonths(tx));
+}
+
+// Meses transcurridos entre el mes de inicio ("YYYY-MM") y otro mes.
+function monthsBetween(startDate, year, month) {
+  var y = parseInt(startDate.slice(0, 4), 10);
+  var m = parseInt(startDate.slice(5, 7), 10) - 1;
+  return (year - y) * 12 + (month - m);
+}
+
+// Monto de la mensualidad número idx (0-based) de un gasto MSI.
+// La última mensualidad absorbe el redondeo para que la suma sea el total.
+function msiInstallmentAmount(tx, idx) {
+  var months = msiMonths(tx);
+  if (months <= 1) return tx.amount;
+  var monthly = msiMonthly(tx);
+  if (idx === months - 1) return round2(tx.amount - monthly * (months - 1));
+  return monthly;
+}
+
+// Mensualidad que toca en el mes de vista (viewYear/viewMonth), o 0 si no toca.
+function msiAmountForViewMonth(tx) {
+  if (tx.type !== "gasto") return 0;
+  var idx = monthsBetween(tx.date, viewYear, viewMonth);
+  if (idx < 0 || idx >= msiMonths(tx)) return 0;
+  return msiInstallmentAmount(tx, idx);
+}
+
+function msiInstallmentLabel(tx) {
+  var months = msiMonths(tx);
+  if (months <= 1) return "";
+  var idx = monthsBetween(tx.date, viewYear, viewMonth);
+  var base = "a " + months + " MSI · " + fmt(msiMonthly(tx)) + "/mes";
+  if (idx >= 0 && idx < months) return base + " · " + (idx + 1) + "/" + months;
+  if (idx < 0) return base + " · inicia " + tx.date.slice(0, 7);
+  return base + " · " + months + "/" + months + " pagado";
+}
+
 // En efectivo/débito, "balance" es el saldo.
 // En crédito, "balance" es la deuda actual.
 function addFunds(account, amount) {
@@ -142,6 +192,28 @@ function closeAllModals() {
   ["accountModal", "txModal"].forEach(function (id) { $(id).hidden = true; });
 }
 
+function msiPlansHtml(cardId) {
+  var now = new Date();
+  var plans = state.transactions.filter(function (tx) {
+    if (tx.type !== "gasto" || tx.accountId !== cardId || msiMonths(tx) <= 1) return false;
+    var paid = Math.min(msiMonths(tx), Math.max(0, monthsBetween(tx.date, now.getFullYear(), now.getMonth())));
+    return paid < msiMonths(tx);
+  });
+  if (!plans.length) return "";
+  return '<div class="msi-plans"><p class="msi-title">Planes a meses sin intereses</p>' + plans.map(function (tx) {
+    var months = msiMonths(tx);
+    var paid = Math.min(months, Math.max(0, monthsBetween(tx.date, now.getFullYear(), now.getMonth())));
+    var remaining = months - paid;
+    var paidSum = 0;
+    for (var i = 0; i < paid; i++) paidSum += msiInstallmentAmount(tx, i);
+    var remainingTotal = round2(tx.amount - paidSum);
+    return '<p class="meta msi-plan">' + escapeHtml(tx.note || displayCategory(tx.category)) +
+      " · " + fmt(tx.amount) + " a " + months + " MSI · " + fmt(msiMonthly(tx)) + "/mes" +
+      " · pagados " + paid + " de " + months + " · faltan " + remaining +
+      " · restante: " + fmt(remainingTotal) + "</p>";
+  }).join("") + "</div>";
+}
+
 function renderAccounts() {
   var list = $("accountsList");
   var t = totals();
@@ -166,6 +238,7 @@ function renderAccounts() {
         '<div class="usage' + (usedPct >= 90 ? " over" : "") + '">' +
         '<span style="width:' + usedPct.toFixed(1) + '%"></span></div>' +
         '<p class="meta">Uso del crédito: ' + usedPct.toFixed(0) + "%</p>" +
+        msiPlansHtml(a.id) +
         '<div class="account-actions">' +
         '<button type="button" class="btn small pay" data-pay="' + a.id + '">Pagar tarjeta</button>' +
         "</div>";
@@ -218,12 +291,14 @@ function renderSummary() {
   var income = 0, expense = 0;
   var byCategory = {};
   state.transactions.forEach(function (tx) {
-    if (tx.date.slice(0, 7) !== month) return;
-    if (tx.type === "ingreso") income += tx.amount;
+    if (tx.type === "ingreso" && tx.date.slice(0, 7) === month) income += tx.amount;
     if (tx.type === "gasto") {
-      expense += tx.amount;
-      var cat = displayCategory(tx.category);
-      byCategory[cat] = (byCategory[cat] || 0) + tx.amount;
+      var due = msiAmountForViewMonth(tx);
+      if (due > 0) {
+        expense += due;
+        var cat = displayCategory(tx.category);
+        byCategory[cat] = (byCategory[cat] || 0) + due;
+      }
     }
   });
   $("monthIncome").textContent = fmt(income);
@@ -251,7 +326,8 @@ function txItemHtml(tx) {
   return '<li><div><div class="tx-title">' + escapeHtml(tx.note || typeLabel(tx.type)) + "</div>" +
     '<div class="tx-meta">' + escapeHtml(typeLabel(tx.type)) + " · " + escapeHtml(detail) +
     " · " + escapeHtml(tx.date) +
-    (tx.category && tx.type === "gasto" ? " · " + escapeHtml(displayCategory(tx.category)) : "") + "</div></div>" +
+    (tx.category && tx.type === "gasto" ? " · " + escapeHtml(displayCategory(tx.category)) : "") +
+    (tx.type === "gasto" && msiMonths(tx) > 1 ? " · " + escapeHtml(msiInstallmentLabel(tx)) : "") + "</div></div>" +
     '<div class="tx-amount mono ' + cls + '">' + sign + " " + fmt(tx.amount) + "</div>" +
     '<div class="tx-actions">' +
     '<button type="button" class="btn small" data-edit-tx="' + tx.id + '">Editar</button>' +
@@ -402,11 +478,24 @@ $("addAccountBtn").addEventListener("click", function () {
 
 // ---- Movimientos ----
 
+function updateMsiHint() {
+  var hint = $("txMonthlyHint");
+  if (!hint) return;
+  var amount = parseFloat($("txAmount").value) || 0;
+  var months = parseInt($("txMonths").value, 10) || 1;
+  hint.textContent = amount > 0
+    ? "Pago mensual: " + fmt(round2(amount / months)) + (months > 1 ? " durante " + months + " meses" : "")
+    : "";
+}
+
 function updateTxFormVisibility() {
   var type = $("txType").value;
   var needsDestination = type === "transferencia" || type === "pago";
   $("txDestinationWrap").hidden = !needsDestination;
   $("txCategoryWrap").hidden = type !== "gasto";
+  var account = accountById($("txAccount").value);
+  $("txMsiWrap").hidden = !(type === "gasto" && account && account.type === "credito");
+  updateMsiHint();
   if (type === "pago") {
     var creditOptions = state.accounts.filter(function (a) { return a.type === "credito"; });
     $("txDestination").innerHTML = creditOptions.map(function (a) {
@@ -423,6 +512,9 @@ function updateTxFormVisibility() {
 }
 
 $("txType").addEventListener("change", updateTxFormVisibility);
+$("txAccount").addEventListener("change", updateTxFormVisibility);
+$("txAmount").addEventListener("input", updateMsiHint);
+$("txMonths").addEventListener("change", updateMsiHint);
 
 function startPayCard(cardId) {
   var card = accountById(cardId);
@@ -448,8 +540,10 @@ function startEditTx(id) {
   if (tx.destinationId) $("txDestination").value = tx.destinationId;
   $("txAmount").value = tx.amount;
   $("txDate").value = tx.date;
+  $("txMonths").value = String(msiMonths(tx));
   $("txCategory").value = displayCategory(tx.category);
   $("txNote").value = tx.note || "";
+  updateTxFormVisibility();
   $("txSubmitBtn").textContent = "Guardar cambios";
   $("txCancelBtn").hidden = false;
   openModal("txModal");
@@ -458,6 +552,7 @@ function startEditTx(id) {
 function resetTxForm() {
   editingTxId = null;
   $("transactionForm").reset();
+  $("txMonths").value = "1";
   $("txFormTitle").textContent = "Registrar movimiento";
   $("txDate").value = new Date().toISOString().slice(0, 10);
   $("txSubmitBtn").textContent = "Guardar movimiento";
@@ -482,15 +577,21 @@ $("transactionForm").addEventListener("submit", function (e) {
     return;
   }
   var type = $("txType").value;
+  var amount = parseFloat($("txAmount").value) || 0;
+  var account = accountById($("txAccount").value);
+  var msi = type === "gasto" && account && account.type === "credito"
+    ? (parseInt($("txMonths").value, 10) || 1) : 1;
   var tx = {
     id: editingTxId || uid(),
     type: type,
     accountId: $("txAccount").value,
     destinationId: (type === "transferencia" || type === "pago") ? $("txDestination").value : null,
-    amount: parseFloat($("txAmount").value) || 0,
+    amount: amount,
     date: $("txDate").value,
     category: type === "gasto" ? $("txCategory").value : "",
-    note: $("txNote").value.trim()
+    note: $("txNote").value.trim(),
+    months: msi,
+    monthlyAmount: round2(amount / msi)
   };
   if (!tx.accountId || !tx.amount || tx.amount <= 0 || !tx.date) return;
   if ((type === "transferencia" || type === "pago") && (!tx.destinationId || tx.destinationId === tx.accountId)) {

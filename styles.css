@@ -224,6 +224,11 @@ main { display: grid; gap: 1rem; }
 .tx-amount.expense { color: #b91c1c; }
 .tx-actions { grid-column: 1 / -1; display: flex; gap: 0.5rem; }
 
+.msi-hint { font-size: 0.85rem; font-weight: 400; color: #14532d; }
+.msi-plans { border-top: 1px dashed #dde5dc; margin-top: 0.75rem; padding-top: 0.5rem; }
+.msi-title { font-size: 0.9rem; font-weight: 700; margin: 0.25rem 0; }
+.msi-plan { margin: 0.25rem 0; }
+
 .empty { color: #4b5a52; }
 
 .modal {
