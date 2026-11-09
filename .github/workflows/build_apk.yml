@@ -43,6 +43,20 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Corregir duplicados de Kotlin en Gradle
+        run: |
+          cat << 'EOF' >> android/build.gradle
+
+          subprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
+                      exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+                  }
+              }
+          }
+          EOF
+
       - name: Otorgar permisos a Gradle
         run: chmod +x android/gradlew
 
