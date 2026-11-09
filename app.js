@@ -5,13 +5,17 @@
 var STORAGE_KEY = "controlFinanzasV1";
 
 var CATEGORIES = [
-  "Comida", "Transporte", "Súper", "Vivienda", "Servicios",
-  "Salud", "Entretenimiento", "Ropa", "Educación", "Sueldo", "Otro"
+  "Comida", "Transporte", "Súper y despensa", "Vivienda", "Servicios",
+  "Salud", "Entretenimiento", "Ropa", "Educación", "Mascotas",
+  "Compras", "Sueldo", "Otro ingreso", "Otro"
 ];
 
 var state = loadState();
 var editingAccountId = null;
 var editingTxId = null;
+var today = new Date();
+var viewYear = today.getFullYear();
+var viewMonth = today.getMonth();
 
 function loadState() {
   try {
@@ -61,6 +65,22 @@ function typeLabel(type) {
   return type;
 }
 
+// "Súper" era el nombre anterior de la categoría; hoy es "Súper y despensa".
+function displayCategory(cat) {
+  if (cat === "Súper") return "Súper y despensa";
+  return cat || "Otro";
+}
+
+function monthKey() {
+  return viewYear + "-" + String(viewMonth + 1).padStart(2, "0");
+}
+
+function monthLabel() {
+  var label = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" })
+    .format(new Date(viewYear, viewMonth, 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 // En efectivo/débito, "balance" es el saldo.
 // En crédito, "balance" es la deuda actual.
 function addFunds(account, amount) {
@@ -107,6 +127,21 @@ function totals() {
   };
 }
 
+function setTab(name) {
+  document.querySelectorAll(".tab").forEach(function (btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-tab") === name);
+  });
+  ["resumen", "cuentas", "movimientos"].forEach(function (n) {
+    $("panel-" + n).hidden = n !== name;
+  });
+}
+
+function openModal(id) { $(id).hidden = false; }
+function closeModal(id) { $(id).hidden = true; }
+function closeAllModals() {
+  ["accountModal", "txModal"].forEach(function (id) { $(id).hidden = true; });
+}
+
 function renderAccounts() {
   var list = $("accountsList");
   var t = totals();
@@ -136,8 +171,8 @@ function renderAccounts() {
         "</div>";
     }
     return '<article class="account">' +
-      "<header><h4>" + escapeHtml(a.name) + '</h4><span class="badge">' + escapeHtml(a.type) + "</span></header>" +
-      '<p class="amount">' + fmt(a.balance) + "</p>" +
+      "<header><h4>" + escapeHtml(a.name) + '</h4><span class="badge' + (a.type === "credito" ? " credit" : "") + '">' + escapeHtml(a.type) + "</span></header>" +
+      '<p class="amount mono">' + fmt(a.balance) + "</p>" +
       '<p class="meta">' + (a.type === "credito" ? "Deuda actual" : "Saldo actual") + "</p>" +
       creditHtml +
       '<div class="account-actions">' +
@@ -178,15 +213,16 @@ function fillAccountSelects() {
 }
 
 function renderSummary() {
-  var month = $("summaryMonth").value;
+  var month = monthKey();
+  $("monthLabel").textContent = monthLabel();
   var income = 0, expense = 0;
   var byCategory = {};
   state.transactions.forEach(function (tx) {
-    if (month && tx.date.slice(0, 7) !== month) return;
+    if (tx.date.slice(0, 7) !== month) return;
     if (tx.type === "ingreso") income += tx.amount;
     if (tx.type === "gasto") {
       expense += tx.amount;
-      var cat = tx.category || "Otro";
+      var cat = displayCategory(tx.category);
       byCategory[cat] = (byCategory[cat] || 0) + tx.amount;
     }
   });
@@ -199,56 +235,68 @@ function renderSummary() {
   $("noCategory").hidden = entries.length > 0;
   $("categorySummary").innerHTML = entries.map(function (entry) {
     var pct = max > 0 ? (entry[1] / max) * 100 : 0;
-    return '<div class="category-row"><span>' + escapeHtml(entry[0]) + "</span><strong>" + fmt(entry[1]) + "</strong>" +
+    return '<div class="category-row"><span>' + escapeHtml(entry[0]) + "</span><strong class=\"mono\">" + fmt(entry[1]) + "</strong>" +
       '<div class="bar"><span style="width:' + pct.toFixed(1) + '%"></span></div></div>';
   }).join("");
+}
+
+function txItemHtml(tx) {
+  var from = accountById(tx.accountId);
+  var to = tx.destinationId ? accountById(tx.destinationId) : null;
+  var detail = from ? from.name : "Cuenta eliminada";
+  if (to) detail += " → " + to.name;
+  var isIncome = tx.type === "ingreso";
+  var sign = isIncome ? "+" : "−";
+  var cls = isIncome ? "income" : (tx.type === "gasto" ? "expense" : "");
+  return '<li><div><div class="tx-title">' + escapeHtml(tx.note || typeLabel(tx.type)) + "</div>" +
+    '<div class="tx-meta">' + escapeHtml(typeLabel(tx.type)) + " · " + escapeHtml(detail) +
+    " · " + escapeHtml(tx.date) +
+    (tx.category && tx.type === "gasto" ? " · " + escapeHtml(displayCategory(tx.category)) : "") + "</div></div>" +
+    '<div class="tx-amount mono ' + cls + '">' + sign + " " + fmt(tx.amount) + "</div>" +
+    '<div class="tx-actions">' +
+    '<button type="button" class="btn small" data-edit-tx="' + tx.id + '">Editar</button>' +
+    '<button type="button" class="btn small danger" data-delete-tx="' + tx.id + '">Eliminar</button>' +
+    "</div></li>";
+}
+
+function bindTxButtons(root) {
+  root.querySelectorAll("[data-edit-tx]").forEach(function (btn) {
+    btn.addEventListener("click", function () { startEditTx(btn.getAttribute("data-edit-tx")); });
+  });
+  root.querySelectorAll("[data-delete-tx]").forEach(function (btn) {
+    btn.addEventListener("click", function () { deleteTx(btn.getAttribute("data-delete-tx")); });
+  });
+}
+
+function sortedTransactions() {
+  return state.transactions.slice().sort(function (a, b) {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return 0;
+  });
 }
 
 function filteredTransactions() {
   var accountId = $("filterAccount").value;
   var type = $("filterType").value;
   var search = $("filterSearch").value.trim().toLowerCase();
-  return state.transactions
-    .filter(function (tx) {
-      if (accountId && tx.accountId !== accountId && tx.destinationId !== accountId) return false;
-      if (type && tx.type !== type) return false;
-      if (search && !(tx.note || "").toLowerCase().includes(search)) return false;
-      return true;
-    })
-    .sort(function (a, b) {
-      if (a.date !== b.date) return b.date.localeCompare(a.date);
-      return 0;
-    });
+  return sortedTransactions().filter(function (tx) {
+    if (accountId && tx.accountId !== accountId && tx.destinationId !== accountId) return false;
+    if (type && tx.type !== type) return false;
+    if (search && !(tx.note || "").toLowerCase().includes(search)) return false;
+    return true;
+  });
 }
 
 function renderTransactions() {
   var list = filteredTransactions();
   $("noTransactions").hidden = list.length > 0;
-  $("transactionsList").innerHTML = list.map(function (tx) {
-    var from = accountById(tx.accountId);
-    var to = tx.destinationId ? accountById(tx.destinationId) : null;
-    var detail = from ? from.name : "Cuenta eliminada";
-    if (to) detail += " → " + to.name;
-    var isIncome = tx.type === "ingreso";
-    var sign = isIncome ? "+" : "−";
-    var cls = isIncome ? "income" : (tx.type === "gasto" ? "expense" : "");
-    return '<li><div><div class="tx-title">' + escapeHtml(tx.note || typeLabel(tx.type)) + "</div>" +
-      '<div class="tx-meta">' + escapeHtml(typeLabel(tx.type)) + " · " + escapeHtml(detail) +
-      " · " + escapeHtml(tx.date) +
-      (tx.category && tx.type === "gasto" ? " · " + escapeHtml(tx.category) : "") + "</div></div>" +
-      '<div class="tx-amount ' + cls + '">' + sign + " " + fmt(tx.amount) + "</div>" +
-      '<div class="tx-actions">' +
-      '<button type="button" class="btn small" data-edit-tx="' + tx.id + '">Editar</button>' +
-      '<button type="button" class="btn small danger" data-delete-tx="' + tx.id + '">Eliminar</button>' +
-      "</div></li>";
-  }).join("");
+  $("transactionsList").innerHTML = list.map(txItemHtml).join("");
+  bindTxButtons($("transactionsList"));
 
-  document.querySelectorAll("[data-edit-tx]").forEach(function (btn) {
-    btn.addEventListener("click", function () { startEditTx(btn.getAttribute("data-edit-tx")); });
-  });
-  document.querySelectorAll("[data-delete-tx]").forEach(function (btn) {
-    btn.addEventListener("click", function () { deleteTx(btn.getAttribute("data-delete-tx")); });
-  });
+  var recent = sortedTransactions().slice(0, 5);
+  $("noRecent").hidden = recent.length > 0;
+  $("recentList").innerHTML = recent.map(txItemHtml).join("");
+  bindTxButtons($("recentList"));
 }
 
 function renderAll() {
@@ -278,7 +326,7 @@ function startEditAccount(id) {
   $("accountPaymentDay").value = a.paymentDay || "";
   $("accountSubmitBtn").textContent = "Guardar cambios";
   $("accountCancelBtn").hidden = false;
-  $("accountForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  openModal("accountModal");
 }
 
 function resetAccountForm() {
@@ -338,10 +386,19 @@ $("accountForm").addEventListener("submit", function (e) {
   }
   saveState();
   resetAccountForm();
+  closeModal("accountModal");
   renderAll();
 });
 
-$("accountCancelBtn").addEventListener("click", resetAccountForm);
+$("accountCancelBtn").addEventListener("click", function () {
+  resetAccountForm();
+  closeModal("accountModal");
+});
+
+$("addAccountBtn").addEventListener("click", function () {
+  resetAccountForm();
+  openModal("accountModal");
+});
 
 // ---- Movimientos ----
 
@@ -351,7 +408,6 @@ function updateTxFormVisibility() {
   $("txDestinationWrap").hidden = !needsDestination;
   $("txCategoryWrap").hidden = type !== "gasto";
   if (type === "pago") {
-    // El destino de un pago siempre es una tarjeta de crédito.
     var creditOptions = state.accounts.filter(function (a) { return a.type === "credito"; });
     $("txDestination").innerHTML = creditOptions.map(function (a) {
       return '<option value="' + a.id + '">' + escapeHtml(a.name) + "</option>";
@@ -371,12 +427,13 @@ $("txType").addEventListener("change", updateTxFormVisibility);
 function startPayCard(cardId) {
   var card = accountById(cardId);
   if (!card) return;
+  resetTxForm();
   $("txType").value = "pago";
   updateTxFormVisibility();
   $("txDestination").value = cardId;
   $("txAmount").value = "";
   $("txDate").value = new Date().toISOString().slice(0, 10);
-  $("transactionForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  openModal("txModal");
   $("txAmount").focus();
 }
 
@@ -384,29 +441,39 @@ function startEditTx(id) {
   var tx = state.transactions.find(function (t) { return t.id === id; });
   if (!tx) return;
   editingTxId = id;
+  $("txFormTitle").textContent = "Editar movimiento";
   $("txType").value = tx.type;
   updateTxFormVisibility();
   $("txAccount").value = tx.accountId;
   if (tx.destinationId) $("txDestination").value = tx.destinationId;
   $("txAmount").value = tx.amount;
   $("txDate").value = tx.date;
-  $("txCategory").value = tx.category || "Otro";
+  $("txCategory").value = displayCategory(tx.category);
   $("txNote").value = tx.note || "";
   $("txSubmitBtn").textContent = "Guardar cambios";
   $("txCancelBtn").hidden = false;
-  $("transactionForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  openModal("txModal");
 }
 
 function resetTxForm() {
   editingTxId = null;
   $("transactionForm").reset();
+  $("txFormTitle").textContent = "Registrar movimiento";
   $("txDate").value = new Date().toISOString().slice(0, 10);
   $("txSubmitBtn").textContent = "Guardar movimiento";
   $("txCancelBtn").hidden = true;
   updateTxFormVisibility();
 }
 
-$("txCancelBtn").addEventListener("click", resetTxForm);
+$("txCancelBtn").addEventListener("click", function () {
+  resetTxForm();
+  closeModal("txModal");
+});
+
+$("registerMovementBtn").addEventListener("click", function () {
+  resetTxForm();
+  openModal("txModal");
+});
 
 $("transactionForm").addEventListener("submit", function (e) {
   e.preventDefault();
@@ -445,6 +512,7 @@ $("transactionForm").addEventListener("submit", function (e) {
   }
   saveState();
   resetTxForm();
+  closeModal("txModal");
   renderAll();
 });
 
@@ -458,18 +526,48 @@ function deleteTx(id) {
   renderAll();
 }
 
-// ---- Filtros y resumen ----
+// ---- Pestañas, mes y modales ----
+
+document.querySelectorAll(".tab").forEach(function (btn) {
+  btn.addEventListener("click", function () { setTab(btn.getAttribute("data-tab")); });
+});
+
+$("prevMonth").addEventListener("click", function () {
+  viewMonth -= 1;
+  if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; }
+  renderSummary();
+});
+
+$("nextMonth").addEventListener("click", function () {
+  viewMonth += 1;
+  if (viewMonth > 11) { viewMonth = 0; viewYear += 1; }
+  renderSummary();
+});
+
+document.querySelectorAll("[data-close]").forEach(function (btn) {
+  btn.addEventListener("click", function () { closeModal(btn.getAttribute("data-close")); });
+});
+
+document.querySelectorAll(".modal").forEach(function (modal) {
+  modal.addEventListener("click", function (e) {
+    if (e.target === modal) closeModal(modal.id);
+  });
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") closeAllModals();
+});
+
+// ---- Filtros ----
 
 $("filterAccount").addEventListener("change", renderTransactions);
 $("filterType").addEventListener("change", renderTransactions);
 $("filterSearch").addEventListener("input", renderTransactions);
-$("summaryMonth").addEventListener("change", renderSummary);
 
 // ---- Inicio ----
 
 (function init() {
-  var today = new Date();
   $("txDate").value = today.toISOString().slice(0, 10);
-  $("summaryMonth").value = today.toISOString().slice(0, 7);
+  setTab("resumen");
   renderAll();
 })();
