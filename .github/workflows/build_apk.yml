@@ -16,19 +16,30 @@ jobs:
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
-      - name: Configurar Java
+      - name: Configurar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Instalar Capacitor y generar proyecto Android
+      - name: Preparar carpeta Web
+        run: |
+          mkdir -p www
+          rsync -av --exclude='www' --exclude='android' --exclude='.git' --exclude='.github' --exclude='node_modules' ./ www/
+
+      - name: Configurar e Instalar Capacitor
         run: |
           npm init -y
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          npx cap init "App Finanzas" "com.alexloza.appfinanzas" --web-dir .
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.alexloza.appfinanzas",
+            "appName": "App Finanzas",
+            "webDir": "www"
+          }
+          EOF
           npx cap add android
           npx cap sync android
 
