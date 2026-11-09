@@ -231,6 +231,70 @@ main { display: grid; gap: 1rem; }
 
 .empty { color: #4b5a52; }
 
+.tab-badge {
+  color: #b45309;
+  font-size: 1.2rem;
+  line-height: 0;
+  margin-left: 0.15rem;
+}
+.tab.active .tab-badge { color: #fef3c7; }
+
+.reminder-banner { border-color: #b45309; background: #fffbeb; }
+.reminder-banner h2 { color: #b45309; }
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.35rem;
+  margin: 0.75rem 0 0.35rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4b5a52;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.35rem;
+}
+.cal-day {
+  min-height: 3rem;
+  border: 1px solid #dde5dc;
+  border-radius: 12px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: #1a2420;
+  cursor: pointer;
+  padding: 0.3rem 0.2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+.cal-day.outside { color: #9aa8a0; background: #f4f6f2; }
+.cal-day.today { border-color: #14532d; border-width: 2px; font-weight: 700; }
+.cal-day.selected { background: #14532d; color: #ffffff; }
+.cal-day.selected .cal-dot { background: #fef3c7; }
+.cal-dots { display: flex; gap: 0.2rem; min-height: 0.45rem; }
+.cal-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: #b45309;
+  display: inline-block;
+}
+.cal-dot.msi { background: #14532d; }
+.tomorrow-tag {
+  font-size: 0.75rem;
+  background: #fef3c7;
+  color: #b45309;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-weight: 700;
+  margin-left: 0.4rem;
+}
+
 .modal {
   position: fixed;
   inset: 0;

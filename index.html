@@ -35,6 +35,7 @@
     <button type="button" class="tab active" data-tab="resumen">Resumen</button>
     <button type="button" class="tab" data-tab="cuentas">Cuentas</button>
     <button type="button" class="tab" data-tab="movimientos">Movimientos</button>
+    <button type="button" class="tab" data-tab="calendario">Calendario<span id="calTabBadge" class="tab-badge" hidden>•</span></button>
   </nav>
 
   <main>
@@ -108,6 +109,45 @@
         </div>
         <ul id="transactionsList" class="transactions"></ul>
         <p id="noTransactions" class="empty">No hay movimientos que coincidan con los filtros.</p>
+      </section>
+    </section>
+
+    <section id="panel-calendario" class="panel" hidden>
+      <div id="calReminderBanner" class="card reminder-banner" hidden>
+        <h2>Pagos mañana</h2>
+        <ul id="calReminderList" class="transactions"></ul>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Recordatorios</h2>
+          <button type="button" class="btn primary" id="reminderBtn">Activar recordatorios</button>
+        </div>
+        <p id="reminderNote" class="empty">Te aviso un día antes de cada pago próximo, con una notificación y un aviso dentro de la app.</p>
+      </section>
+
+      <section class="card">
+        <div class="card month-nav">
+          <button type="button" class="btn arrow" id="prevCalMonth" aria-label="Mes anterior">←</button>
+          <strong id="calMonthLabel" class="month-label"></strong>
+          <button type="button" class="btn arrow" id="nextCalMonth" aria-label="Mes siguiente">→</button>
+        </div>
+        <div class="cal-weekdays" aria-hidden="true">
+          <span>lun</span><span>mar</span><span>mié</span><span>jue</span><span>vie</span><span>sáb</span><span>dom</span>
+        </div>
+        <div id="calGrid" class="cal-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2 id="calDayTitle">Pagos del día</h2>
+        <ul id="calDayList" class="transactions"></ul>
+        <p id="noCalDay" class="empty">No hay pagos este día.</p>
+      </section>
+
+      <section class="card">
+        <h2>Próximos pagos</h2>
+        <ul id="upcomingList" class="transactions"></ul>
+        <p id="noUpcoming" class="empty">No hay pagos próximos en los siguientes 30 días.</p>
       </section>
     </section>
   </main>

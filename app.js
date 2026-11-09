@@ -16,6 +16,11 @@ var editingTxId = null;
 var today = new Date();
 var viewYear = today.getFullYear();
 var viewMonth = today.getMonth();
+var calYear = today.getFullYear();
+var calMonth = today.getMonth();
+var calSelected = today.toISOString().slice(0, 10);
+var REMINDER_ENABLED_KEY = "controlFinanzasRemindersEnabled";
+var REMINDER_LAST_KEY = "controlFinanzasLastNotified";
 
 function loadState() {
   try {
@@ -238,9 +243,10 @@ function setTab(name) {
   document.querySelectorAll(".tab").forEach(function (btn) {
     btn.classList.toggle("active", btn.getAttribute("data-tab") === name);
   });
-  ["resumen", "cuentas", "movimientos"].forEach(function (n) {
+  ["resumen", "cuentas", "movimientos", "calendario"].forEach(function (n) {
     $("panel-" + n).hidden = n !== name;
   });
+  if (name === "calendario") renderCalendar();
 }
 
 function openModal(id) { $(id).hidden = false; }
@@ -440,8 +446,252 @@ function renderAll() {
   renderAccounts();
   renderSummary();
   renderTransactions();
+  renderCalendar();
   updateTxFormVisibility();
 }
+
+// ---- Calendario y recordatorios ----
+
+function parseISODate(iso) {
+  var parts = iso.split("-");
+  return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+}
+
+function isoFromDate(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function clampDay(year, month, day) {
+  return Math.min(Math.max(1, day), daysInMonth(year, month));
+}
+
+function addMonthsToDate(date, n) {
+  return new Date(date.getFullYear(), date.getMonth() + n, clampDay(date.getFullYear(), date.getMonth() + n, date.getDate()));
+}
+
+function formatDayLong(iso) {
+  var label = new Intl.DateTimeFormat("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    .format(parseISODate(iso));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function formatShortDate(iso) {
+  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" }).format(parseISODate(iso));
+}
+
+function calMonthLabel() {
+  var label = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" })
+    .format(new Date(calYear, calMonth, 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+// Eventos de pago entre dos fechas (inclusive). No duplica: una
+// mensualidad MSI y el pago de la tarjeta son eventos separados
+// aunque caigan el mismo día.
+function paymentEvents(startDate, endDate) {
+  var events = [];
+  var start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  var end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+  // 1. Día de pago mensual de cada tarjeta de crédito con deuda.
+  state.accounts.forEach(function (a) {
+    if (a.type !== "credito" || !a.paymentDay || !(a.balance > 0)) return;
+    var cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cursor <= end) {
+      var day = clampDay(cursor.getFullYear(), cursor.getMonth(), a.paymentDay);
+      var d = new Date(cursor.getFullYear(), cursor.getMonth(), day);
+      if (d >= start && d <= end) {
+        events.push({ date: isoFromDate(d), kind: "tarjeta", label: "Pago de tarjeta · " + a.name, card: a.name, amount: a.balance });
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+  });
+
+  // 2. Mensualidades MSI restantes, una por mes, en el día de compra.
+  state.transactions.forEach(function (tx) {
+    if (tx.type !== "gasto" || msiMonths(tx) <= 1) return;
+    var allocations = msiAllocations(tx.accountId);
+    var paidAmount = round2(allocations[tx.id] || 0);
+    if (paidAmount >= round2(tx.amount || 0)) return;
+    var paid = msiPaidMonths(tx, paidAmount);
+    var card = accountById(tx.accountId);
+    var startTx = parseISODate(tx.date);
+    for (var idx = paid; idx < msiMonths(tx); idx++) {
+      var d = addMonthsToDate(startTx, idx);
+      if (d < start || d > end) continue;
+      events.push({
+        date: isoFromDate(d), kind: "msi",
+        label: "Mensualidad MSI · " + (tx.note || displayCategory(tx.category)) + " · " + (idx + 1) + "/" + msiMonths(tx),
+        card: card ? card.name : "", amount: msiInstallmentAmount(tx, idx)
+      });
+    }
+  });
+
+  events.sort(function (a, b) {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.kind.localeCompare(b.kind);
+  });
+  return events;
+}
+
+function eventItemHtml(ev, showTomorrowTag) {
+  var tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  var isTomorrow = ev.date === isoFromDate(tomorrow);
+  return '<li><div><div class="tx-title">' + escapeHtml(ev.label) + "</div>" +
+    '<div class="tx-meta">' + escapeHtml(formatDayLong(ev.date)) +
+    (ev.card ? " · " + escapeHtml(ev.card) : "") + "</div></div>" +
+    '<div class="tx-amount mono">' + fmt(ev.amount) +
+    (showTomorrowTag && isTomorrow ? '<span class="tomorrow-tag">mañana</span>' : "") + "</div></li>";
+}
+
+function renderCalendar() {
+  if (!$("calGrid")) return;
+  $("calMonthLabel").textContent = calMonthLabel();
+  var first = new Date(calYear, calMonth, 1);
+  var offset = (first.getDay() + 6) % 7; // semanas empiezan en lunes
+  var totalDays = daysInMonth(calYear, calMonth);
+  var monthStart = new Date(calYear, calMonth, 1);
+  var monthEnd = new Date(calYear, calMonth, totalDays);
+  var events = paymentEvents(monthStart, monthEnd);
+  var byDate = {};
+  events.forEach(function (ev) {
+    (byDate[ev.date] = byDate[ev.date] || []).push(ev);
+  });
+
+  var cells = "";
+  var gridStart = new Date(calYear, calMonth, 1 - offset);
+  for (var i = 0; i < 42; i++) {
+    var d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    var iso = isoFromDate(d);
+    var dayEvents = byDate[iso] || [];
+    var cls = "cal-day" +
+      (d.getMonth() !== calMonth ? " outside" : "") +
+      (iso === isoFromDate(today) ? " today" : "") +
+      (iso === calSelected ? " selected" : "");
+    var dots = dayEvents.map(function (ev) {
+      return '<span class="cal-dot' + (ev.kind === "msi" ? " msi" : "") + '"></span>';
+    }).join("");
+    cells += '<button type="button" class="' + cls + '" data-date="' + iso + '">' +
+      "<span>" + d.getDate() + '</span><span class="cal-dots">' + dots + "</span></button>";
+  }
+  $("calGrid").innerHTML = cells;
+  $("calGrid").querySelectorAll("[data-date]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      calSelected = btn.getAttribute("data-date");
+      renderCalendar();
+    });
+  });
+
+  renderCalDay();
+  renderUpcoming();
+  checkReminders();
+}
+
+function renderCalDay() {
+  var dayEvents = paymentEvents(parseISODate(calSelected), parseISODate(calSelected));
+  $("calDayTitle").textContent = "Pagos del " + formatShortDate(calSelected);
+  $("noCalDay").hidden = dayEvents.length > 0;
+  $("calDayList").innerHTML = dayEvents.map(function (ev) { return eventItemHtml(ev, false); }).join("");
+}
+
+function renderUpcoming() {
+  var start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  var end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
+  var upcoming = paymentEvents(start, end);
+  $("noUpcoming").hidden = upcoming.length > 0;
+  $("upcomingList").innerHTML = upcoming.map(function (ev) { return eventItemHtml(ev, true); }).join("");
+}
+
+function remindersEnabled() {
+  try { return localStorage.getItem(REMINDER_ENABLED_KEY) === "1"; } catch (e) { return false; }
+}
+
+function updateReminderNote() {
+  var btn = $("reminderBtn");
+  var note = $("reminderNote");
+  if (!("Notification" in window)) {
+    btn.disabled = true;
+    note.textContent = "Este navegador no admite notificaciones. Los avisos aparecerán dentro de la app cuando la abras; una página web no puede avisarte mientras está cerrada.";
+    return;
+  }
+  if (Notification.permission === "denied") {
+    btn.disabled = true;
+    note.textContent = "Las notificaciones están bloqueadas para esta app. Actívalas en los ajustes del navegador para recibir recordatorios; mientras tanto, los avisos aparecerán dentro de la app cuando la abras.";
+    return;
+  }
+  if (remindersEnabled() && Notification.permission === "granted") {
+    btn.textContent = "Recordatorios activados";
+    btn.disabled = true;
+    note.textContent = "Recordatorios activados: te avisaré un día antes de cada pago, con una notificación y un aviso dentro de la app. Una página web solo puede notificarte mientras la app está abierta; si está cerrada, verás el aviso al abrirla.";
+    return;
+  }
+  btn.textContent = "Activar recordatorios";
+  btn.disabled = false;
+  note.textContent = "Te aviso un día antes de cada pago próximo, con una notificación y un aviso dentro de la app. Una página web solo puede notificarte mientras la app está abierta.";
+}
+
+function checkReminders() {
+  updateReminderNote();
+  var tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  var due = paymentEvents(tomorrow, tomorrow);
+  var banner = $("calReminderBanner");
+  var badge = $("calTabBadge");
+  if (!due.length) {
+    banner.hidden = true;
+    badge.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  badge.hidden = false;
+  $("calReminderList").innerHTML = due.map(function (ev) { return eventItemHtml(ev, false); }).join("");
+
+  if (!remindersEnabled() || !("Notification" in window) || Notification.permission !== "granted") return;
+  var signature = isoFromDate(tomorrow) + "|" + due.length + "|" + due.map(function (ev) { return ev.label + ":" + ev.amount; }).join(",");
+  var last = null;
+  try { last = localStorage.getItem(REMINDER_LAST_KEY); } catch (e) { last = null; }
+  if (last === signature) return; // ya se avisó hoy por este mismo conjunto de pagos
+  try { localStorage.setItem(REMINDER_LAST_KEY, signature); } catch (e) { /* sin almacenamiento, no se repite el aviso en esta sesión */ }
+  var first = due[0];
+  try {
+    new Notification("Pago mañana: " + first.label, {
+      body: fmt(first.amount) + (due.length > 1 ? " · y " + (due.length - 1) + " pago(s) más mañana" : ""),
+      tag: "control-finanzas-manana"
+    });
+  } catch (e) { /* la notificación falló; el aviso dentro de la app ya está visible */ }
+}
+
+$("reminderBtn").addEventListener("click", function () {
+  if (!("Notification" in window)) { updateReminderNote(); return; }
+  if (Notification.permission === "granted") {
+    try { localStorage.setItem(REMINDER_ENABLED_KEY, "1"); } catch (e) { /* ok */ }
+    checkReminders();
+    return;
+  }
+  Notification.requestPermission().then(function (permission) {
+    if (permission === "granted") {
+      try { localStorage.setItem(REMINDER_ENABLED_KEY, "1"); } catch (e) { /* ok */ }
+    }
+    checkReminders();
+  });
+});
+
+$("prevCalMonth").addEventListener("click", function () {
+  calMonth -= 1;
+  if (calMonth < 0) { calMonth = 11; calYear -= 1; }
+  renderCalendar();
+});
+
+$("nextCalMonth").addEventListener("click", function () {
+  calMonth += 1;
+  if (calMonth > 11) { calMonth = 0; calYear += 1; }
+  renderCalendar();
+});
+
+setInterval(function () { checkReminders(); }, 60 * 60 * 1000);
 
 // ---- Cuentas ----
 
