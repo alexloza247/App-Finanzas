@@ -1,4 +1,4 @@
-name: Compilar APK desde Web (HTML/CSS/JS)
+name: Compilar APK desde Web
 
 on:
   push:
@@ -16,18 +16,18 @@ jobs:
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Configurar Java 17
+      - name: Configurar Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Inicializar Capacitor y generar proyecto Android
+      - name: Instalar Capacitor y generar proyecto Android
         run: |
           npm init -y
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           npx cap init "App Finanzas" "com.alexloza.appfinanzas" --web-dir .
           npx cap add android
           npx cap sync android
@@ -35,12 +35,12 @@ jobs:
       - name: Otorgar permisos a Gradle
         run: chmod +x android/gradlew
 
-      - name: Compilar APK Android
+      - name: Compilar APK Debug
         run: |
           cd android
           ./gradlew assembleDebug
 
-      - name: Subir APK como artefacto descargable
+      - name: Subir APK descargable
         uses: actions/upload-artifact@v4
         with:
           name: App-Finanzas-APK
