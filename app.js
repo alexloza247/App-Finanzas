@@ -84,6 +84,11 @@ function monthLabel() {
 // ---- Meses sin intereses (MSI) ----
 // La deuda total se suma a la tarjeta al comprar; el resumen mensual
 // solo cuenta la mensualidad que toca ese mes.
+// El avance de cada plan NO se calcula por calendario: se calcula a
+// partir de los pagos reales ("pago") hechos a esa tarjeta, para que
+// pagar la tarjeta sí reduzca la deuda a meses. Se recomputa en cada
+// render a partir de la lista de movimientos, sin campos guardados,
+// así que editar o eliminar un pago o un gasto MSI se refleja solo.
 function round2(n) { return Math.round(n * 100) / 100; }
 
 function msiMonths(tx) {
@@ -111,6 +116,58 @@ function msiInstallmentAmount(tx, idx) {
   var monthly = msiMonthly(tx);
   if (idx === months - 1) return round2(tx.amount - monthly * (months - 1));
   return monthly;
+}
+
+// Dinero ya pagado a cada plan MSI de una tarjeta, repartiendo cada
+// "pago" a esa tarjeta entre sus planes activos en orden de compra
+// (el más viejo primero), solo a planes comprados en la fecha del
+// pago o antes, y sin pasar del total de cada plan. Lo que sobra de
+// un pago solo baja el saldo general de la tarjeta, como siempre.
+// Devuelve un objeto { idDelGastoMSI: montoAsignado }.
+function msiAllocations(cardId) {
+  var allocations = {};
+  var plans = state.transactions.filter(function (tx) {
+    return tx.type === "gasto" && tx.accountId === cardId && msiMonths(tx) > 1;
+  }).sort(function (a, b) {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return 0;
+  });
+  plans.forEach(function (tx) { allocations[tx.id] = 0; });
+  var payments = state.transactions.filter(function (tx) {
+    return tx.type === "pago" && tx.destinationId === cardId;
+  }).sort(function (a, b) {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return 0;
+  });
+  payments.forEach(function (pay) {
+    var remaining = round2(pay.amount || 0);
+    if (remaining <= 0) return;
+    plans.forEach(function (plan) {
+      if (remaining <= 0) return;
+      if (plan.date > pay.date) return;
+      var left = round2((plan.amount || 0) - allocations[plan.id]);
+      if (left <= 0) return;
+      var take = Math.min(remaining, left);
+      allocations[plan.id] = round2(allocations[plan.id] + take);
+      remaining = round2(remaining - take);
+    });
+  });
+  return allocations;
+}
+
+// Mensualidades completas cubiertas por el monto asignado a un plan.
+// La última mensualidad absorbe el redondeo, como en msiInstallmentAmount.
+function msiPaidMonths(tx, allocated) {
+  var months = msiMonths(tx);
+  var paid = 0;
+  var left = round2(allocated || 0);
+  for (var i = 0; i < months; i++) {
+    var inst = msiInstallmentAmount(tx, i);
+    if (left + 0.001 < inst) break;
+    paid++;
+    left = round2(left - inst);
+  }
+  return paid;
 }
 
 // Mensualidad que toca en el mes de vista (viewYear/viewMonth), o 0 si no toca.
@@ -193,22 +250,25 @@ function closeAllModals() {
 }
 
 function msiPlansHtml(cardId) {
-  var now = new Date();
+  var allocations = msiAllocations(cardId);
   var plans = state.transactions.filter(function (tx) {
     if (tx.type !== "gasto" || tx.accountId !== cardId || msiMonths(tx) <= 1) return false;
-    var paid = Math.min(msiMonths(tx), Math.max(0, monthsBetween(tx.date, now.getFullYear(), now.getMonth())));
-    return paid < msiMonths(tx);
+    // Un plan completo (pagado por completo con pagos reales) ya no se lista.
+    return round2(allocations[tx.id] || 0) < round2(tx.amount || 0);
+  }).sort(function (a, b) {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return 0;
   });
   if (!plans.length) return "";
   return '<div class="msi-plans"><p class="msi-title">Planes a meses sin intereses</p>' + plans.map(function (tx) {
     var months = msiMonths(tx);
-    var paid = Math.min(months, Math.max(0, monthsBetween(tx.date, now.getFullYear(), now.getMonth())));
+    var paidAmount = round2(allocations[tx.id] || 0);
+    var paid = msiPaidMonths(tx, paidAmount);
     var remaining = months - paid;
-    var paidSum = 0;
-    for (var i = 0; i < paid; i++) paidSum += msiInstallmentAmount(tx, i);
-    var remainingTotal = round2(tx.amount - paidSum);
+    var remainingTotal = round2(tx.amount - paidAmount);
     return '<p class="meta msi-plan">' + escapeHtml(tx.note || displayCategory(tx.category)) +
       " · " + fmt(tx.amount) + " a " + months + " MSI · " + fmt(msiMonthly(tx)) + "/mes" +
+      " · pagado " + fmt(paidAmount) + " de " + fmt(tx.amount) +
       " · pagados " + paid + " de " + months + " · faltan " + remaining +
       " · restante: " + fmt(remainingTotal) + "</p>";
   }).join("") + "</div>";
