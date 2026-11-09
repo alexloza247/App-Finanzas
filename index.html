@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Finanzas</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="app-header">
+  <h1>Control de Finanzas</h1>
+  <p class="subtitle">Efectivo, débito y crédito en un solo lugar</p>
+  <div class="net-worth">
+    <span class="label">Patrimonio neto</span>
+    <strong id="netWorth">$0.00</strong>
+    <span class="hint">Efectivo + débito − deuda de tarjetas de crédito</span>
+  </div>
+  <div class="totals">
+    <div><span>Efectivo y débito</span><strong id="totalCashDebit">$0.00</strong></div>
+    <div><span>Deuda de crédito</span><strong id="totalCreditDebt">$0.00</strong></div>
+    <div><span>Crédito disponible</span><strong id="totalCreditAvailable">$0.00</strong></div>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Mis cuentas</h2>
+    <div id="accountsList" class="accounts"></div>
+    <p id="noAccounts" class="empty">Aún no tienes cuentas. Agrega tu primera cuenta abajo.</p>
+
+    <h3 id="accountFormTitle">Agregar cuenta</h3>
+    <form id="accountForm" class="form">
+      <label>Nombre
+        <input type="text" id="accountName" placeholder="Ej. Efectivo, BBVA débito, Amex" required maxlength="60">
+      </label>
+      <label>Tipo
+        <select id="accountType" required>
+          <option value="efectivo">Efectivo</option>
+          <option value="debito">Débito</option>
+          <option value="credito">Crédito</option>
+        </select>
+      </label>
+      <label id="balanceLabel">Saldo actual (MXN)
+        <input type="number" id="accountBalance" min="0" step="0.01" value="0" required>
+      </label>
+      <div id="creditFields" class="credit-fields" hidden>
+        <label>Límite de crédito (MXN)
+          <input type="number" id="accountLimit" min="0" step="0.01" value="0">
+        </label>
+        <label>Últimos 4 dígitos
+          <input type="text" id="accountLast4" inputmode="numeric" pattern="[0-9]{0,4}" maxlength="4" placeholder="1234">
+        </label>
+        <label>Día de corte
+          <input type="number" id="accountCutoff" min="1" max="31" placeholder="15">
+        </label>
+        <label>Día de pago
+          <input type="number" id="accountPaymentDay" min="1" max="31" placeholder="5">
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn primary" id="accountSubmitBtn">Guardar cuenta</button>
+        <button type="button" class="btn ghost" id="accountCancelBtn" hidden>Cancelar edición</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Registrar movimiento</h2>
+    <form id="transactionForm" class="form">
+      <label>Tipo
+        <select id="txType" required>
+          <option value="ingreso">Ingreso</option>
+          <option value="gasto">Gasto</option>
+          <option value="transferencia">Transferencia entre cuentas</option>
+          <option value="pago">Pagar tarjeta de crédito</option>
+        </select>
+      </label>
+      <label>Cuenta
+        <select id="txAccount" required></select>
+      </label>
+      <label id="txDestinationWrap" hidden>Cuenta destino / tarjeta
+        <select id="txDestination"></select>
+      </label>
+      <label>Monto (MXN)
+        <input type="number" id="txAmount" min="0.01" step="0.01" required>
+      </label>
+      <label>Fecha
+        <input type="date" id="txDate" required>
+      </label>
+      <label id="txCategoryWrap">Categoría
+        <select id="txCategory">
+          <option>Comida</option>
+          <option>Transporte</option>
+          <option>Súper</option>
+          <option>Vivienda</option>
+          <option>Servicios</option>
+          <option>Salud</option>
+          <option>Entretenimiento</option>
+          <option>Ropa</option>
+          <option>Educación</option>
+          <option>Sueldo</option>
+          <option>Otro</option>
+        </select>
+      </label>
+      <label>Nota
+        <input type="text" id="txNote" placeholder="Ej. Despensa de la semana" maxlength="120">
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn primary" id="txSubmitBtn">Guardar movimiento</button>
+        <button type="button" class="btn ghost" id="txCancelBtn" hidden>Cancelar edición</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Resumen mensual</h2>
+    <label class="month-picker">Mes
+      <input type="month" id="summaryMonth">
+    </label>
+    <div class="totals">
+      <div><span>Ingresos</span><strong class="positive" id="monthIncome">$0.00</strong></div>
+      <div><span>Gastos</span><strong class="negative" id="monthExpense">$0.00</strong></div>
+      <div><span>Balance</span><strong id="monthBalance">$0.00</strong></div>
+    </div>
+    <h3>Gasto por categoría</h3>
+    <div id="categorySummary"></div>
+    <p id="noCategory" class="empty">No hay gastos registrados en este mes.</p>
+  </section>
+
+  <section class="card">
+    <h2>Movimientos</h2>
+    <div class="filters">
+      <label>Cuenta
+        <select id="filterAccount">
+          <option value="">Todas</option>
+        </select>
+      </label>
+      <label>Tipo
+        <select id="filterType">
+          <option value="">Todos</option>
+          <option value="ingreso">Ingreso</option>
+          <option value="gasto">Gasto</option>
+          <option value="transferencia">Transferencia</option>
+          <option value="pago">Pago de tarjeta</option>
+        </select>
+      </label>
+      <label>Buscar por nota
+        <input type="search" id="filterSearch" placeholder="Buscar en notas…">
+      </label>
+    </div>
+    <ul id="transactionsList" class="transactions"></ul>
+    <p id="noTransactions" class="empty">No hay movimientos que coincidan con los filtros.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Nota: esta es una versión independiente, sin servidor. Los datos se guardan en el navegador (localStorage) de este dispositivo y no se sincronizan con la app de Muse ni con otros dispositivos.</p>
+  <p>Para usarla, abre <code>index.html</code> en tu navegador.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
