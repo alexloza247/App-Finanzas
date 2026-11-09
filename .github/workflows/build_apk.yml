@@ -24,6 +24,9 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Configurar Gradle Entorno
+        uses: gradle/actions/setup-gradle@v3
+
       - name: Preparar carpeta Web
         run: |
           mkdir -p www
@@ -43,7 +46,7 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Corregir duplicados de Kotlin en Gradle
+      - name: Corregir duplicados de Kotlin
         run: |
           cat << 'EOF' >> android/build.gradle
 
@@ -63,7 +66,7 @@ jobs:
       - name: Compilar APK Debug
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
       - name: Subir APK descargable
         uses: actions/upload-artifact@v4
